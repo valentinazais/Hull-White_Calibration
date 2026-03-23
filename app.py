@@ -74,7 +74,6 @@ YIELD_TENOR_MAP = {
     '10Y':10,'20Y':20,'30Y':30
 }
 
-
 def get_market_data():
     vol_df = pd.DataFrame(SWAPTION_VOL_DATA, index=EXPIRY_LABELS)
     vol_df.columns = TENOR_LABELS
@@ -83,19 +82,17 @@ def get_market_data():
     yc_tenors = np.array([YIELD_TENOR_MAP[k] for k in YIELD_CURVE])
     yc_yields = np.array([v / 100.0 for v in YIELD_CURVE.values()])
     sort_idx = np.argsort(yc_tenors)
+
     yc_tenors = yc_tenors[sort_idx]
     yc_yields = yc_yields[sort_idx]
 
     return vol_df, yc_tenors, yc_yields
 
-
-# ─────────────────────────────────────────────
-# Display Market Data & Calibration Controls
-# ─────────────────────────────────────────────
-
 vol_df, yc_tenors, yc_yields = get_market_data()
 
-# ── Calibration Controls (top of page) ──
+# ─────────────────────────────────────────────
+# Calibration Controls
+# ─────────────────────────────────────────────
 st.header("Calibration")
 
 with st.sidebar:
@@ -105,7 +102,9 @@ with st.sidebar:
 
 run_btn = st.button("Run Calibration", type="primary", use_container_width=True)
 
-# ── Market Data ──
+# ─────────────────────────────────────────────
+# Market Data Display
+# ─────────────────────────────────────────────
 st.header("Market Data")
 
 col1, col2 = st.columns([2, 1])
@@ -116,15 +115,13 @@ with col1:
         z=vol_df.values,
         x=TENOR_LABELS,
         y=EXPIRY_LABELS,
-        colorscale='RdYlBu_r',
-        text=np.round(vol_df.values, 1),
-        texttemplate='%{text}',
-        textfont={'size': 9},
-        colorbar=dict(title='bps')
+        colorscale='RdYlBu_r'
     ))
     fig_vol.update_layout(
-        xaxis_title='Swap Tenor', yaxis_title='Option Expiry',
-        height=550, margin=dict(l=60, r=20, t=30, b=50),
+        xaxis_title='Swap Tenor',
+        yaxis_title='Option Expiry',
+        height=550,
+        margin=dict(l=60, r=20, t=30, b=50),
         yaxis=dict(autorange='reversed')
     )
     st.plotly_chart(fig_vol, use_container_width=True)
@@ -137,41 +134,27 @@ with col2:
 
     fig_yc = go.Figure()
     fig_yc.add_trace(go.Scatter(
-        x=yc_labels_sorted, y=yc_vals_sorted,
-        mode='lines+markers',
-        line=dict(color='#00d4aa', width=2),
-        marker=dict(size=6),
-        name='Yield'
+        x=yc_labels_sorted,
+        y=yc_vals_sorted,
+        mode='lines+markers'
     ))
     fig_yc.update_layout(
         yaxis_title='Yield (%)',
-        height=550, margin=dict(l=60, r=20, t=30, b=50)
+        height=550
     )
     st.plotly_chart(fig_yc, use_container_width=True)
 
+# ─────────────────────────────────────────────
+# Calibration
+# ─────────────────────────────────────────────
 if run_btn:
     zero_spline = build_zero_curve(yc_tenors, yc_yields)
 
-    progress_bar = st.progress(0, text="Calibrating...")
-    status_text = st.empty()
+    result = calibrate(
+        vol_df, zero_spline, EXPIRY_MAP, TENOR_MAP,
+        a0=a_init, sigma0=sigma_init
+    )
 
-    iter_data = []
-
-    def cb(it, a, sigma, rmse):
-        iter_data.append({'Iteration': it, 'a': a, 'σ': sigma, 'RMSE (bps)': rmse})
-        if it % 5 == 0 or it <= 3:
-            progress_bar.progress(min(it / 300, 1.0),
-                                  text=f"Iteration {it} — RMSE: {rmse:.2f} bps")
-
-    with st.spinner("Running Nelder-Mead optimization..."):
-        result = calibrate(
-            vol_df, zero_spline, EXPIRY_MAP, TENOR_MAP,
-            a0=a_init, sigma0=sigma_init, callback=cb
-        )
-
-    progress_bar.progress(1.0, text="Calibration complete")
-
-    # ── Results ──
     st.header("Results")
 
     c1, c2, c3 = st.columns(3)
@@ -179,8 +162,6 @@ if run_btn:
     c2.metric("Volatility (σ*)", f"{result['sigma']:.6f}")
     c3.metric("Final RMSE", f"{result['history'][-1]['rmse']:.2f} bps")
 
-    # Convergence plot
-    st.subheader("Convergence")
     hist_df = pd.DataFrame(result['history'])
 
     col_a, col_b = st.columns(2)
@@ -188,104 +169,49 @@ if run_btn:
     with col_a:
         fig_conv = go.Figure()
         fig_conv.add_trace(go.Scatter(
-            x=hist_df['iteration'], y=hist_df['rmse'],
-            mode='lines', line=dict(color='#ff6b6b', width=2), name='RMSE'
+            x=hist_df['iteration'],
+            y=hist_df['rmse'],
+            mode='lines',
+            name='RMSE'
         ))
         fig_conv.update_layout(
             title='RMSE vs Iteration',
-            xaxis_title='Iteration', yaxis_title='RMSE (bps)',
-            height=350, margin=dict(l=60, r=20, t=40, b=40)
+            xaxis_title='Iteration',
+            yaxis_title='RMSE (bps)',
+            height=350
         )
         st.plotly_chart(fig_conv, use_container_width=True)
 
     with col_b:
         fig_params = go.Figure()
         fig_params.add_trace(go.Scatter(
-            x=hist_df['iteration'], y=hist_df['a'],
-            mode='lines', line=dict(color='#4ecdc4', width=2), name='a'
+            x=hist_df['iteration'],
+            y=hist_df['a'],
+            mode='lines',
+            name='a'
         ))
         fig_params.add_trace(go.Scatter(
-            x=hist_df['iteration'], y=hist_df['sigma'],
-            mode='lines', line=dict(color='#ffe66d', width=2), name='σ',
+            x=hist_df['iteration'],
+            y=hist_df['sigma'],
+            mode='lines',
+            name='σ',
             yaxis='y2'
         ))
+
+        # FIX PLOTLY
         fig_params.update_layout(
             title='Parameter Trajectory',
             xaxis_title='Iteration',
-            yaxis=dict(title='a', titlefont=dict(color='#4ecdc4')),
-            yaxis2=dict(title='σ', titlefont=dict(color='#ffe66d'),
-                        overlaying='y', side='right'),
-            height=350, margin=dict(l=60, r=60, t=40, b=40)
+            yaxis=dict(
+                title=dict(text='a')
+            ),
+            yaxis2=dict(
+                title=dict(text='σ'),
+                overlaying='y',
+                side='right'
+            ),
+            height=350,
+            margin=dict(l=60, r=60, t=40, b=40)
         )
+
         st.plotly_chart(fig_params, use_container_width=True)
-
-    # Iteration log
-    st.subheader("Iteration Log")
-    display_hist = hist_df[['iteration', 'a', 'sigma', 'rmse']].copy()
-    display_hist.columns = ['Iteration', 'a', 'σ', 'RMSE (bps)']
-    st.dataframe(display_hist.style.format({
-        'a': '{:.6f}', 'σ': '{:.6f}', 'RMSE (bps)': '{:.2f}'
-    }), height=300, use_container_width=True)
-
-    # ── Model vs Market vol surface ──
-    st.subheader("Model vs Market Vol Surface")
-
-    model_vol_matrix = vol_df.copy() * 0.0
-    for (elbl, tlbl), mv in result['model_vols'].items():
-        model_vol_matrix.loc[elbl, tlbl] = mv
-
-    diff_matrix = model_vol_matrix - vol_df
-
-    tab1, tab2 = st.tabs(["Model Vols", "Difference (Model − Market)"])
-
-    with tab1:
-        fig_mv = go.Figure(data=go.Heatmap(
-            z=model_vol_matrix.values,
-            x=TENOR_LABELS, y=EXPIRY_LABELS,
-            colorscale='RdYlBu_r',
-            text=np.round(model_vol_matrix.values, 1),
-            texttemplate='%{text}',
-            textfont={'size': 9},
-            colorbar=dict(title='bps')
-        ))
-        fig_mv.update_layout(
-            xaxis_title='Swap Tenor', yaxis_title='Option Expiry',
-            height=550, margin=dict(l=60, r=20, t=30, b=50),
-            yaxis=dict(autorange='reversed')
-        )
-        st.plotly_chart(fig_mv, use_container_width=True)
-
-    with tab2:
-        max_abs = max(abs(diff_matrix.values.min()), abs(diff_matrix.values.max()), 1)
-        fig_diff = go.Figure(data=go.Heatmap(
-            z=diff_matrix.values,
-            x=TENOR_LABELS, y=EXPIRY_LABELS,
-            colorscale='RdBu_r',
-            zmid=0,
-            text=np.round(diff_matrix.values, 1),
-            texttemplate='%{text}',
-            textfont={'size': 9},
-            colorbar=dict(title='bps')
-        ))
-        fig_diff.update_layout(
-            xaxis_title='Swap Tenor', yaxis_title='Option Expiry',
-            height=550, margin=dict(l=60, r=20, t=30, b=50),
-            yaxis=dict(autorange='reversed')
-        )
-        st.plotly_chart(fig_diff, use_container_width=True)
-
-    # ── θ(t) plot ──
-    st.subheader("θ(t) — Time-Dependent Drift")
-    t_grid = np.linspace(0.01, 30, 200)
-    theta_vals = [theta(result['a'], result['sigma'], t, zero_spline) for t in t_grid]
-
-    fig_theta = go.Figure()
-    fig_theta.add_trace(go.Scatter(
-        x=t_grid, y=theta_vals,
-        mode='lines', line=dict(color='#a29bfe', width=2)
-    ))
-    fig_theta.update_layout(
-        xaxis_title='Time (years)', yaxis_title='θ(t)',
-        height=350, margin=dict(l=60, r=20, t=30, b=40)
-    )
-    st.plotly_chart(fig_theta, use_container_width=True)
